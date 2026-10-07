@@ -15,10 +15,14 @@ def execute(filters=None):
 
 	validate_filters(filters)
 
-	columns = get_columns(filters)
 	supplier_quotation_data = get_data(filters)
+	if filters.get("categorize_by") == "Compare Side by Side":
+		columns, data = prepare_side_by_side_data(supplier_quotation_data, filters)
+		chart_data = []
+	else:
+		columns = get_columns(filters)
+		data, chart_data = prepare_data(supplier_quotation_data, filters)
 
-	data, chart_data = prepare_data(supplier_quotation_data, filters)
 	message = get_message()
 
 	return columns, data, message, chart_data
@@ -169,6 +173,60 @@ def prepare_data(supplier_quotation_data, filters):
 		chart_data = prepare_chart_data(suppliers, qty_list, supplier_qty_price_map)
 
 	return out, chart_data
+
+
+def prepare_side_by_side_data(supplier_quotation_data, filters):
+	currency = frappe.get_cached_value("Company", filters.get("company"), "default_currency")
+	float_precision = cint(frappe.db.get_default("float_precision")) or 2
+	quotations = []
+	quotation_labels = {}
+	items = {}
+
+	for entry in supplier_quotation_data:
+		quotation = entry.get("parent")
+
+		if quotation not in quotations:
+			quotations.append(quotation)
+			quotation_labels[quotation] = entry.get("supplier_name") or quotation
+
+		item_code = entry.get("item_code")
+		if item_code not in items:
+			items[item_code] = {
+				"item_code": item_code,
+				"stock_uom": entry.get("stock_uom"),
+			}
+
+		items[item_code][frappe.scrub(quotation)] = flt(entry.get("base_rate"), float_precision)
+
+	columns = [
+		{
+			"fieldname": "item_code",
+			"label": _("Item"),
+			"fieldtype": "Link",
+			"options": "Item",
+			"width": 180,
+		},
+		{
+			"fieldname": "stock_uom",
+			"label": _("Stock UOM"),
+			"fieldtype": "Link",
+			"options": "UOM",
+			"width": 100,
+		},
+	]
+
+	for quotation in quotations:
+		columns.append(
+			{
+				"fieldname": frappe.scrub(quotation),
+				"label": _("{0} ({1})").format(quotation_labels[quotation], quotation),
+				"fieldtype": "Currency",
+				"options": currency,
+				"width": 180,
+			}
+		)
+
+	return columns, list(items.values())
 
 
 def get_order_status(status):
